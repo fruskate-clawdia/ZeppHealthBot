@@ -13,7 +13,7 @@ import re
 import base64
 import tempfile
 import logging
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 
 from telegram import Update
@@ -387,7 +387,36 @@ def main():
     app.add_handler(CommandHandler("food_log", cmd_food_log))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Morning report at 08:00 local time (set MORNING_REPORT_UTC_HOUR env var, default 2 = UTC+6 08:00)
+    report_hour = int(os.environ.get("MORNING_REPORT_UTC_HOUR", "2"))
+    app.job_queue.run_daily(
+        morning_report_job,
+        time=time(hour=report_hour, minute=0),
+        name="morning_report"
+    )
+    log.info(f"✅ Morning report scheduled at UTC {report_hour:02d}:00")
+
     app.run_polling(drop_pending_updates=True)
+
+
+async def send_morning_report(app):
+    """Send morning health summary"""
+    data = load_health_data()
+    if not data:
+        return
+    summary = format_health_summary(data)
+    advice = ask_claude(
+        "Morning summary. Briefly: how was the night, what's important today, one tip.",
+        data
+    )
+    text = f"🌅 Good morning!\n\n{summary}\n\n💡 {advice}"
+    await app.bot.send_message(chat_id=ALLOWED_USER, text=text)
+
+
+async def morning_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """JobQueue wrapper for morning report"""
+    await send_morning_report(context.application)
 
 
 if __name__ == "__main__":
